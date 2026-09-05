@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
@@ -16,36 +16,48 @@ import (
 )
 
 func main() {
+	logger := slog.New(
+		slog.NewJSONHandler(
+			os.Stdout,
+			&slog.HandlerOptions{Level: slog.LevelInfo},
+		),
+	)
+	slog.SetDefault(logger)
+
 	if err := godotenv.Load(); err != nil {
-		log.Println(
+		logger.Warn(
 			".env not found, using system environment variables",
 		)
 	}
 
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
-		log.Fatal("DATABASE_URL is required")
+		logger.Error("DATABASE_URL is required")
+		os.Exit(1)
 	}
 
 	kafkaBrokersValue := os.Getenv("KAFKA_BROKERS")
 	if kafkaBrokersValue == "" {
-		log.Fatal("KAFKA_BROKERS is required")
+		logger.Error("KAFKA_BROKERS is required")
+		os.Exit(1)
 	}
 
 	kafkaTopic := os.Getenv(
 		"KAFKA_CULTIVATION_ADVANCED_TOPIC",
 	)
 	if kafkaTopic == "" {
-		log.Fatal(
+		logger.Error(
 			"KAFKA_CULTIVATION_ADVANCED_TOPIC is required",
 		)
+		os.Exit(1)
 	}
 
 	kafkaConsumerGroup := os.Getenv(
 		"KAFKA_CONSUMER_GROUP",
 	)
 	if kafkaConsumerGroup == "" {
-		log.Fatal("KAFKA_CONSUMER_GROUP is required")
+		logger.Error("KAFKA_CONSUMER_GROUP is required")
+		os.Exit(1)
 	}
 
 	kafkaBrokers := strings.Split(
@@ -67,11 +79,12 @@ func main() {
 		databaseURL,
 	)
 	if err != nil {
-		log.Fatalf("connect PostgreSQL: %v", err)
+		logger.Error("connect PostgreSQL", "error", err)
+		os.Exit(1)
 	}
 	defer pool.Close()
 
-	log.Println("PostgreSQL connected")
+	logger.Info("PostgreSQL connected")
 
 	// Application
 
@@ -87,19 +100,17 @@ func main() {
 		kafkaConsumerGroup,
 	)
 	if err != nil {
-		log.Fatalf("connect Kafka: %v", err)
+		logger.Error("connect Kafka", "error", err)
+		os.Exit(1)
 	}
 	defer kafkaClient.Close()
 
-	log.Printf(
-		"Kafka connected brokers=%v",
-		kafkaBrokers,
-	)
+	logger.Info("Kafka connected", "brokers", kafkaBrokers)
 
-	log.Printf(
-		"Kafka consumer ready topic=%s group=%s",
-		kafkaTopic,
-		kafkaConsumerGroup,
+	logger.Info(
+		"Kafka consumer ready",
+		"topic", kafkaTopic,
+		"group", kafkaConsumerGroup,
 	)
 
 	consumer := kafkaadapter.NewCultivationConsumer(
@@ -107,14 +118,12 @@ func main() {
 		resourceService,
 	)
 
-	log.Println("resource allocation worker started")
+	logger.Info("resource allocation worker started")
 
 	if err := consumer.Run(ctx); err != nil {
-		log.Fatalf(
-			"run cultivation consumer: %v",
-			err,
-		)
+		logger.Error("run cultivation consumer", "error", err)
+		os.Exit(1)
 	}
 
-	log.Println("resource allocation worker stopped")
+	logger.Info("resource allocation worker stopped")
 }

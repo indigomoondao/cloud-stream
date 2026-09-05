@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 
 	"cs-dr/internal/disciple"
@@ -14,18 +14,29 @@ import (
 )
 
 func main() {
+	logger := slog.New(
+		slog.NewJSONHandler(
+			os.Stdout,
+			&slog.HandlerOptions{Level: slog.LevelInfo},
+		),
+	)
+
 	if err := godotenv.Load(); err != nil {
-		log.Println(".env not found, using system environment variables")
+		logger.Warn(
+			".env not found, using system environment variables",
+		)
 	}
 
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
-		log.Fatal("DATABASE_URL is required")
+		logger.Error("DATABASE_URL is required")
+		os.Exit(1)
 	}
 
 	httpPort := os.Getenv("HTTP_PORT")
 	if httpPort == "" {
-		log.Fatal("HTTP_PORT is required")
+		logger.Error("HTTP_PORT is required")
+		os.Exit(1)
 	}
 
 	ctx := context.Background()
@@ -34,11 +45,12 @@ func main() {
 
 	pool, err := postgres.NewPool(ctx, databaseURL)
 	if err != nil {
-		log.Fatalf("connect PostgreSQL: %v", err)
+		logger.Error("connect PostgreSQL", "error", err)
+		os.Exit(1)
 	}
 	defer pool.Close()
 
-	log.Println("PostgreSQL connected")
+	logger.Info("PostgreSQL connected")
 
 	discipleRepository :=
 		postgres.NewDiscipleRepository(pool)
@@ -65,12 +77,13 @@ func main() {
 
 	address := ":" + httpPort
 
-	log.Printf(
-		"disciple registry listening on http://localhost:%s",
-		httpPort,
+	logger.Info(
+		"disciple registry listening",
+		"address", "http://localhost:"+httpPort,
 	)
 
 	if err := router.Run(address); err != nil {
-		log.Fatalf("start HTTP server: %v", err)
+		logger.Error("start HTTP server", "error", err)
+		os.Exit(1)
 	}
 }

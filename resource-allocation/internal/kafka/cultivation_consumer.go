@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"cs-ra/internal/resource"
@@ -130,25 +130,23 @@ func (c *cultivationConsumer) processRecord(
 	}
 
 	if processed {
-		log.Printf(
-			"cultivation event processed "+
-				cultivationEventRecordFormat,
-			event.EventID,
-			event.DiscipleID,
-			record.Partition,
-			record.Offset,
+		slog.Info(
+			"cultivation event processed",
+			"event_id", event.EventID,
+			"disciple_id", event.DiscipleID,
+			"partition", record.Partition,
+			"offset", record.Offset,
 		)
 
 		return nil
 	}
 
-	log.Printf(
-		"cultivation event already processed "+
-			cultivationEventRecordFormat,
-		event.EventID,
-		event.DiscipleID,
-		record.Partition,
-		record.Offset,
+	slog.Info(
+		"cultivation event already processed",
+		"event_id", event.EventID,
+		"disciple_id", event.DiscipleID,
+		"partition", record.Partition,
+		"offset", record.Offset,
 	)
 
 	return nil
