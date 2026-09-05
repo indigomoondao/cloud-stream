@@ -22,6 +22,33 @@ CREATE TABLE IF NOT EXISTS disciple_registry.disciples (
     updated_at          timestamptz NOT NULL DEFAULT now()
 );
 
+-- Outbox for Disciple Registry integration events.
+CREATE TABLE IF NOT EXISTS disciple_registry.outbox_events (
+    event_id       uuid PRIMARY KEY,
+    disciple_id    uuid NOT NULL,
+    event_type     text NOT NULL,
+    event_version  smallint NOT NULL DEFAULT 1
+        CHECK (event_version > 0),
+    previous_realm smallint NOT NULL
+        CHECK (previous_realm BETWEEN 1 AND 5),
+    previous_stage smallint NOT NULL
+        CHECK (previous_stage BETWEEN 1 AND 3),
+    current_realm  smallint NOT NULL
+        CHECK (current_realm BETWEEN 1 AND 5),
+    current_stage  smallint NOT NULL
+        CHECK (current_stage BETWEEN 1 AND 3),
+    occurred_at    timestamptz NOT NULL,
+    published_at   timestamptz,
+    attempts       integer NOT NULL DEFAULT 0
+        CHECK (attempts >= 0),
+    last_error     text,
+    created_at     timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_outbox_events_pending
+    ON disciple_registry.outbox_events (created_at)
+    WHERE published_at IS NULL;
+
 -- ============================================================
 -- Bounded Context: Resource Allocation
 -- disciple_id is a logical reference only.

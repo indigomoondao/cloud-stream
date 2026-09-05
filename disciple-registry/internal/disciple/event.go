@@ -6,6 +6,9 @@ import (
 	"github.com/google/uuid"
 )
 
+const CultivationAdvancedEventType = "DISCIPLE_CULTIVATION_ADVANCED"
+const CultivationAdvancedEventVersion int16 = 1
+
 type CultivationAdvancedEvent struct {
 	EventID       uuid.UUID `json:"eventId"`
 	DiscipleID    uuid.UUID `json:"discipleId"`
@@ -14,4 +17,12 @@ type CultivationAdvancedEvent struct {
 	CurrentRealm  Realm     `json:"currentRealm"`
 	CurrentStage  Stage     `json:"currentStage"`
 	OccurredAt    time.Time `json:"occurredAt"`
+}
+
+func (CultivationAdvancedEvent) Type() string {
+	return CultivationAdvancedEventType
+}
+
+func (CultivationAdvancedEvent) Version() int16 {
+	return CultivationAdvancedEventVersion
 }

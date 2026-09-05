@@ -22,10 +22,11 @@ type Repository interface {
 		id uuid.UUID,
 	) (*Disciple, error)
 
-	UpdateCultivation(
+	SaveCultivationAdvance(
 		ctx context.Context,
 		d *Disciple,
-		currentRealm Realm,
-		currentStage Stage,
+		event CultivationAdvancedEvent,
+		expectedRealm Realm,
+		expectedStage Stage,
 	) error
 }

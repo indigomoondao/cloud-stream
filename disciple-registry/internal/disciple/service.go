@@ -19,13 +19,11 @@ type AdvanceCultivationResult struct {
 
 type Service struct {
 	repository Repository
-	publisher  EventPublisher
 }
 
-func NewService(repository Repository, publisher EventPublisher) *Service {
+func NewService(repository Repository) *Service {
 	return &Service{
 		repository: repository,
-		publisher:  publisher,
 	}
 }
 
@@ -63,15 +61,6 @@ func (s *Service) AdvanceCultivation(
 		return nil, err
 	}
 
-	if err := s.repository.UpdateCultivation(
-		ctx,
-		d,
-		currentRealm,
-		currentStage,
-	); err != nil {
-		return nil, err
-	}
-
 	event := CultivationAdvancedEvent{
 		EventID:       uuid.New(),
 		DiscipleID:    d.ID(),
@@ -82,9 +71,12 @@ func (s *Service) AdvanceCultivation(
 		OccurredAt:    d.UpdatedAt(),
 	}
 
-	if err := s.publisher.PublishCultivationAdvanced(
+	if err := s.repository.SaveCultivationAdvance(
 		ctx,
+		d,
 		event,
+		currentRealm,
+		currentStage,
 	); err != nil {
 		return nil, err
 	}

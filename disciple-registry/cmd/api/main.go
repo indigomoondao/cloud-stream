@@ -80,12 +80,6 @@ func main() {
 		kafkaBrokers,
 	)
 
-	cultivationPublisher :=
-		kafkaadapter.NewCultivationPublisher(
-			kafkaClient,
-			cultivationTopic,
-		)
-
 	log.Printf(
 		"Kafka publisher ready topic=%s",
 		cultivationTopic,
@@ -95,7 +89,6 @@ func main() {
 
 	discipleService := disciple.NewService(
 		discipleRepository,
-		cultivationPublisher,
 	)
 
 	// HTTP

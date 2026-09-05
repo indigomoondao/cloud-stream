@@ -151,11 +151,64 @@ func (r *discipleRepository) FindByID(
 	return d, nil
 }
 
-func (r *discipleRepository) UpdateCultivation(
+func (r *discipleRepository) SaveCultivationAdvance(
 	ctx context.Context,
 	d *disciple.Disciple,
-	currentRealm disciple.Realm,
-	currentStage disciple.Stage,
+	event disciple.CultivationAdvancedEvent,
+	expectedRealm disciple.Realm,
+	expectedStage disciple.Stage,
+) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf(
+			"begin cultivation advance transaction: %w",
+			err,
+		)
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	if err := r.updateCultivation(
+		ctx,
+		tx,
+		d,
+		expectedRealm,
+		expectedStage,
+	); err != nil {
+		return err
+	}
+
+	if err := r.insertOutboxEvent(
+		ctx,
+		tx,
+		event,
+	); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf(
+			"commit cultivation advance transaction: %w",
+			err,
+		)
+	}
+
+	committed = true
+
+	return nil
+}
+
+func (r *discipleRepository) updateCultivation(
+	ctx context.Context,
+	tx pgx.Tx,
+	d *disciple.Disciple,
+	expectedRealm disciple.Realm,
+	expectedStage disciple.Stage,
 ) error {
 	const query = `
 		UPDATE disciple_registry.disciples
@@ -168,15 +221,15 @@ func (r *discipleRepository) UpdateCultivation(
 		  AND cultivation_stage = $6
 	`
 
-	result, err := r.pool.Exec(
+	result, err := tx.Exec(
 		ctx,
 		query,
 		d.ID(),
 		d.Realm(),
 		d.Stage(),
 		d.UpdatedAt(),
-		currentRealm,
-		currentStage,
+		expectedRealm,
+		expectedStage,
 	)
 	if err != nil {
 		return fmt.Errorf(
@@ -188,6 +241,50 @@ func (r *discipleRepository) UpdateCultivation(
 
 	if result.RowsAffected() == 0 {
 		return disciple.ErrCultivationConflict
+	}
+
+	return nil
+}
+
+func (r *discipleRepository) insertOutboxEvent(
+	ctx context.Context,
+	tx pgx.Tx,
+	event disciple.CultivationAdvancedEvent,
+) error {
+	const query = `
+		INSERT INTO disciple_registry.outbox_events (
+			event_id,
+			disciple_id,
+			event_type,
+			event_version,
+			previous_realm,
+			previous_stage,
+			current_realm,
+			current_stage,
+			occurred_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+	`
+
+	_, err := tx.Exec(
+		ctx,
+		query,
+		event.EventID,
+		event.DiscipleID,
+		event.Type(),
+		event.Version(),
+		int16(event.PreviousRealm),
+		int16(event.PreviousStage),
+		int16(event.CurrentRealm),
+		int16(event.CurrentStage),
+		event.OccurredAt,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"insert outbox event %s: %w",
+			event.EventID,
+			err,
+		)
 	}
 
 	return nil
