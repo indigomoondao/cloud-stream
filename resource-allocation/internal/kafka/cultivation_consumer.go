@@ -3,6 +3,7 @@ package kafka
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -26,23 +27,55 @@ type cultivationAdvancedMessage struct {
 }
 
 type cultivationConsumer struct {
-	client  *kgo.Client
-	service *resource.Service
+	client       *kgo.Client
+	service      *resource.Service
+	dlqPublisher deadLetterPublisher
+
+	maxAttempts  int
+	retryBackoff time.Duration
+}
+
+type deadLetterPublisher interface {
+	PublishDeadLetter(
+		ctx context.Context,
+		record *kgo.Record,
+		processingErr error,
+		attempts int,
+	) error
 }
 
 func NewCultivationConsumer(
 	client *kgo.Client,
 	service *resource.Service,
+	dlqPublisher deadLetterPublisher,
+	maxAttempts int,
+	retryBackoff time.Duration,
 ) *cultivationConsumer {
 	return &cultivationConsumer{
-		client:  client,
-		service: service,
+		client:       client,
+		service:      service,
+		dlqPublisher: dlqPublisher,
+		maxAttempts:  maxAttempts,
+		retryBackoff: retryBackoff,
 	}
 }
 
 func (c *cultivationConsumer) Run(
 	ctx context.Context,
 ) error {
+
+	if c.maxAttempts <= 0 {
+		return errors.New("kafka: max attempts must be > 0")
+	}
+
+	if c.retryBackoff < 0 {
+		return errors.New("kafka: retry backoff must be >= 0")
+	}
+
+	if c.dlqPublisher == nil {
+		return errors.New("kafka: dead-letter publisher is required")
+	}
+
 	for {
 		fetches := c.client.PollFetches(ctx)
 
@@ -62,11 +95,78 @@ func (c *cultivationConsumer) Run(
 		for !iter.Done() {
 			record := iter.Next()
 
-			if err := c.processRecord(
-				ctx,
-				record,
-			); err != nil {
-				return err
+			var lastErr error
+			consumed := false
+
+			for attempt := 1; attempt <= c.maxAttempts; attempt++ {
+				err := c.processRecord(
+					ctx,
+					record,
+				)
+				if err == nil {
+					consumed = true
+					break
+				}
+
+				lastErr = err
+
+				if attempt < c.maxAttempts {
+					slog.Warn(
+						"cultivation event processing failed; retrying",
+						"topic", record.Topic,
+						"partition", record.Partition,
+						"offset", record.Offset,
+						"attempt", attempt,
+						"max_attempts", c.maxAttempts,
+						"retry_in", c.retryBackoff,
+						"error", err,
+					)
+
+					timer := time.NewTimer(c.retryBackoff)
+
+					select {
+					case <-timer.C:
+					case <-ctx.Done():
+						if !timer.Stop() {
+							select {
+							case <-timer.C:
+							default:
+							}
+						}
+
+						return ctx.Err()
+					}
+				}
+			}
+
+			if !consumed {
+				if err := c.dlqPublisher.PublishDeadLetter(
+					ctx,
+					record,
+					lastErr,
+					c.maxAttempts,
+				); err != nil {
+					slog.Error(
+						"failed to publish cultivation event to dead letter",
+						"topic", record.Topic,
+						"partition", record.Partition,
+						"offset", record.Offset,
+						"attempts", c.maxAttempts,
+						"processing_error", lastErr,
+						"error", err,
+					)
+
+					return fmt.Errorf("publish dead letter: %w", err)
+				}
+
+				slog.Warn(
+					"cultivation event moved to dead letter",
+					"topic", record.Topic,
+					"partition", record.Partition,
+					"offset", record.Offset,
+					"attempts", c.maxAttempts,
+					"error", lastErr,
+				)
 			}
 
 			if err := c.client.CommitRecords(

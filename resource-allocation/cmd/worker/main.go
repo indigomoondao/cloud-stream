@@ -5,10 +5,12 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
-	kafkaadapter "cs-ra/internal/kafka"
+	"cs-ra/internal/kafka"
 	"cs-ra/internal/postgres"
 	"cs-ra/internal/resource"
 
@@ -42,12 +44,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	kafkaTopic := os.Getenv(
+	kafkaCultivationAdvancedTopic := os.Getenv(
 		"KAFKA_CULTIVATION_ADVANCED_TOPIC",
 	)
-	if kafkaTopic == "" {
+	if kafkaCultivationAdvancedTopic == "" {
 		logger.Error(
 			"KAFKA_CULTIVATION_ADVANCED_TOPIC is required",
+		)
+		os.Exit(1)
+	}
+
+	kafkaCultivationDLQTopic := os.Getenv(
+		"KAFKA_CULTIVATION_ADVANCED_DLQ_TOPIC",
+	)
+	if kafkaCultivationDLQTopic == "" {
+		logger.Error(
+			"KAFKA_CULTIVATION_ADVANCED_DLQ_TOPIC is required",
 		)
 		os.Exit(1)
 	}
@@ -57,6 +69,48 @@ func main() {
 	)
 	if kafkaConsumerGroup == "" {
 		logger.Error("KAFKA_CONSUMER_GROUP is required")
+		os.Exit(1)
+	}
+
+	kafkaConsumerMaxProcessingAttemptsValue := os.Getenv(
+		"KAFKA_CONSUMER_MAX_PROCESSING_ATTEMPTS",
+	)
+	if kafkaConsumerMaxProcessingAttemptsValue == "" {
+		logger.Error(
+			"KAFKA_CONSUMER_MAX_PROCESSING_ATTEMPTS is required",
+		)
+		os.Exit(1)
+	}
+
+	kafkaConsumerMaxProcessingAttempts, err := strconv.Atoi(
+		kafkaConsumerMaxProcessingAttemptsValue,
+	)
+	if err != nil {
+		logger.Error(
+			"invalid KAFKA_CONSUMER_MAX_PROCESSING_ATTEMPTS",
+			"error", err,
+		)
+		os.Exit(1)
+	}
+
+	kafkaConsumerRetryBackoffValue := os.Getenv(
+		"KAFKA_CONSUMER_RETRY_BACKOFF",
+	)
+	if kafkaConsumerRetryBackoffValue == "" {
+		logger.Error(
+			"KAFKA_CONSUMER_RETRY_BACKOFF is required",
+		)
+		os.Exit(1)
+	}
+
+	retryBackoff, err := time.ParseDuration(
+		kafkaConsumerRetryBackoffValue,
+	)
+	if err != nil {
+		logger.Error(
+			"invalid KAFKA_CONSUMER_RETRY_BACKOFF",
+			"error", err,
+		)
 		os.Exit(1)
 	}
 
@@ -93,10 +147,10 @@ func main() {
 
 	// Kafka
 
-	kafkaClient, err := kafkaadapter.NewConsumerClient(
+	kafkaClient, err := kafka.NewConsumerClient(
 		ctx,
 		kafkaBrokers,
-		kafkaTopic,
+		kafkaCultivationAdvancedTopic,
 		kafkaConsumerGroup,
 	)
 	if err != nil {
@@ -109,13 +163,21 @@ func main() {
 
 	logger.Info(
 		"Kafka consumer ready",
-		"topic", kafkaTopic,
+		"topic", kafkaCultivationAdvancedTopic,
 		"group", kafkaConsumerGroup,
 	)
 
-	consumer := kafkaadapter.NewCultivationConsumer(
+	dlqPublisher := kafka.NewCultivationDLQPublisher(
+		kafkaClient,
+		kafkaCultivationDLQTopic,
+	)
+
+	consumer := kafka.NewCultivationConsumer(
 		kafkaClient,
 		resourceService,
+		dlqPublisher,
+		kafkaConsumerMaxProcessingAttempts,
+		retryBackoff,
 	)
 
 	logger.Info("resource allocation worker started")
