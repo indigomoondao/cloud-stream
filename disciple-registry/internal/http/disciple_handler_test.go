@@ -15,10 +15,10 @@ import (
 )
 
 type handlerRepository struct {
-	disciple    *disciple.Disciple
-	listError   error
-	findError   error
-	updateError error
+	disciple  *disciple.Disciple
+	listError error
+	findError error
+	saveError error
 }
 
 func (r *handlerRepository) List(
@@ -42,28 +42,18 @@ func (r *handlerRepository) FindByID(
 	return r.disciple, nil
 }
 
-func (r *handlerRepository) UpdateCultivation(
+func (r *handlerRepository) SaveCultivationAdvance(
 	context.Context,
 	*disciple.Disciple,
+	disciple.CultivationAdvancedEvent,
 	disciple.Realm,
 	disciple.Stage,
 ) error {
-	if r.updateError != nil {
-		return r.updateError
+	if r.saveError != nil {
+		return r.saveError
 	}
 
 	return nil
-}
-
-type handlerPublisher struct {
-	err error
-}
-
-func (p handlerPublisher) PublishCultivationAdvanced(
-	context.Context,
-	disciple.CultivationAdvancedEvent,
-) error {
-	return p.err
 }
 
 func newTestDisciple(
@@ -95,13 +85,11 @@ func newTestDisciple(
 func newTestHandlerWith(
 	t *testing.T,
 	repository *handlerRepository,
-	publisher handlerPublisher,
 ) (*gin.Engine, uuid.UUID) {
 	t.Helper()
 
 	service := disciple.NewService(
 		repository,
-		publisher,
 	)
 
 	gin.SetMode(gin.TestMode)
@@ -123,7 +111,6 @@ func newTestHandler(t *testing.T) (*gin.Engine, uuid.UUID) {
 	return newTestHandlerWith(
 		t,
 		&handlerRepository{disciple: disciple},
-		handlerPublisher{},
 	)
 }
 
@@ -180,7 +167,6 @@ func TestListHandlerMapsInternalError(t *testing.T) {
 			disciple:  d,
 			listError: errors.New("database unavailable"),
 		},
-		handlerPublisher{},
 	)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest("GET", "/api/v1/disciples", nil)
@@ -216,7 +202,6 @@ func TestAdvanceCultivationHandlerMapsNotFound(t *testing.T) {
 			disciple:  d,
 			findError: disciple.ErrDiscipleNotFound,
 		},
-		handlerPublisher{},
 	)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(
@@ -253,7 +238,6 @@ func TestAdvanceCultivationHandlerMapsCannotAdvance(t *testing.T) {
 	router, id := newTestHandlerWith(
 		t,
 		&handlerRepository{disciple: d},
-		handlerPublisher{},
 	)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(
@@ -275,10 +259,9 @@ func TestAdvanceCultivationHandlerMapsInternalError(t *testing.T) {
 	router, id := newTestHandlerWith(
 		t,
 		&handlerRepository{
-			disciple:    d,
-			updateError: wantErr,
+			disciple:  d,
+			saveError: wantErr,
 		},
-		handlerPublisher{},
 	)
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(

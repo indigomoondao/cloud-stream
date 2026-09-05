@@ -10,12 +10,11 @@ import (
 )
 
 type fakeDiscipleRepository struct {
-	disciple     *Disciple
-	updateCalled bool
-	updateError  error
-	findError    error
-	updatedRealm Realm
-	updatedStage Stage
+	disciple   *Disciple
+	saveCalled bool
+	saveError  error
+	findError  error
+	savedEvent CultivationAdvancedEvent
 }
 
 func (f *fakeDiscipleRepository) List(
@@ -35,36 +34,21 @@ func (f *fakeDiscipleRepository) FindByID(
 	return f.disciple, nil
 }
 
-func (f *fakeDiscipleRepository) UpdateCultivation(
-	context.Context,
-	*Disciple,
-	Realm,
-	Stage,
+func (f *fakeDiscipleRepository) SaveCultivationAdvance(
+	_ context.Context,
+	_ *Disciple,
+	event CultivationAdvancedEvent,
+	_ Realm,
+	_ Stage,
 ) error {
-	f.updateCalled = true
+	f.saveCalled = true
+	f.savedEvent = event
 
-	if f.updateError != nil {
-		return f.updateError
+	if f.saveError != nil {
+		return f.saveError
 	}
 
-	f.updatedRealm = f.disciple.Realm()
-	f.updatedStage = f.disciple.Stage()
-
 	return nil
-}
-
-type fakeEventPublisher struct {
-	events []CultivationAdvancedEvent
-	err    error
-}
-
-func (f *fakeEventPublisher) PublishCultivationAdvanced(
-	_ context.Context,
-	event CultivationAdvancedEvent,
-) error {
-	f.events = append(f.events, event)
-
-	return f.err
 }
 
 func newTestDisciple(t *testing.T, realm Realm, stage Stage) *Disciple {
@@ -88,15 +72,14 @@ func newTestDisciple(t *testing.T, realm Realm, stage Stage) *Disciple {
 	return disciple
 }
 
-func TestServiceAdvanceCultivationUpdatesAndPublishes(t *testing.T) {
+func TestServiceAdvanceCultivationPersistsOutboxEvent(t *testing.T) {
 	disciple := newTestDisciple(
 		t,
 		RealmQiRefining,
 		StageMiddle,
 	)
 	repository := &fakeDiscipleRepository{disciple: disciple}
-	publisher := &fakeEventPublisher{}
-	service := NewService(repository, publisher)
+	service := NewService(repository)
 
 	result, err := service.AdvanceCultivation(
 		context.Background(),
@@ -112,15 +95,11 @@ func TestServiceAdvanceCultivationUpdatesAndPublishes(t *testing.T) {
 		t.Fatalf("stage = %v, want %v", result.Disciple.Stage(), StageLate)
 	}
 
-	if !repository.updateCalled {
-		t.Fatal("expected repository update")
+	if !repository.saveCalled {
+		t.Fatal("expected cultivation advance persistence")
 	}
 
-	if len(publisher.events) != 1 {
-		t.Fatalf("published events = %d, want 1", len(publisher.events))
-	}
-
-	event := publisher.events[0]
+	event := repository.savedEvent
 	if event.DiscipleID != disciple.ID() {
 		t.Fatalf("event disciple ID = %s, want %s", event.DiscipleID, disciple.ID())
 	}
@@ -137,7 +116,6 @@ func TestServiceListReturnsDisciples(t *testing.T) {
 	)
 	service := NewService(
 		&fakeDiscipleRepository{disciple: disciple},
-		&fakeEventPublisher{},
 	)
 
 	got, err := service.List(context.Background())
@@ -156,8 +134,7 @@ func TestServiceAdvanceCultivationRejectsStaleState(t *testing.T) {
 		StageMiddle,
 	)
 	repository := &fakeDiscipleRepository{disciple: disciple}
-	publisher := &fakeEventPublisher{}
-	service := NewService(repository, publisher)
+	service := NewService(repository)
 
 	_, err := service.AdvanceCultivation(
 		context.Background(),
@@ -169,12 +146,8 @@ func TestServiceAdvanceCultivationRejectsStaleState(t *testing.T) {
 		t.Fatalf("error = %v, want %v", err, ErrCultivationConflict)
 	}
 
-	if repository.updateCalled {
-		t.Fatal("did not expect repository update")
-	}
-
-	if len(publisher.events) != 0 {
-		t.Fatal("did not expect an event")
+	if repository.saveCalled {
+		t.Fatal("did not expect persistence")
 	}
 }
 
@@ -185,8 +158,7 @@ func TestServiceAdvanceCultivationRejectsInvalidCurrentState(t *testing.T) {
 		StageMiddle,
 	)
 	repository := &fakeDiscipleRepository{disciple: disciple}
-	publisher := &fakeEventPublisher{}
-	service := NewService(repository, publisher)
+	service := NewService(repository)
 
 	_, err := service.AdvanceCultivation(
 		context.Background(),
@@ -210,7 +182,7 @@ func TestServiceAdvanceCultivationReturnsRepositoryError(t *testing.T) {
 		disciple:  disciple,
 		findError: wantErr,
 	}
-	service := NewService(repository, &fakeEventPublisher{})
+	service := NewService(repository)
 
 	_, err := service.AdvanceCultivation(
 		context.Background(),
@@ -230,8 +202,7 @@ func TestServiceAdvanceCultivationRejectsMaximumCultivation(t *testing.T) {
 		StageLate,
 	)
 	repository := &fakeDiscipleRepository{disciple: disciple}
-	publisher := &fakeEventPublisher{}
-	service := NewService(repository, publisher)
+	service := NewService(repository)
 
 	_, err := service.AdvanceCultivation(
 		context.Background(),
@@ -242,12 +213,12 @@ func TestServiceAdvanceCultivationRejectsMaximumCultivation(t *testing.T) {
 	if err != ErrCannotAdvanceCultivation {
 		t.Fatalf("error = %v, want %v", err, ErrCannotAdvanceCultivation)
 	}
-	if repository.updateCalled || len(publisher.events) != 0 {
+	if repository.saveCalled {
 		t.Fatal("did not expect persistence or publication")
 	}
 }
 
-func TestServiceAdvanceCultivationReturnsUpdateError(t *testing.T) {
+func TestServiceAdvanceCultivationReturnsSaveError(t *testing.T) {
 	disciple := newTestDisciple(
 		t,
 		RealmQiRefining,
@@ -255,32 +226,10 @@ func TestServiceAdvanceCultivationReturnsUpdateError(t *testing.T) {
 	)
 	wantErr := errors.New("update failed")
 	repository := &fakeDiscipleRepository{
-		disciple:    disciple,
-		updateError: wantErr,
+		disciple:  disciple,
+		saveError: wantErr,
 	}
-	service := NewService(repository, &fakeEventPublisher{})
-
-	_, err := service.AdvanceCultivation(
-		context.Background(),
-		disciple.ID(),
-		RealmQiRefining,
-		StageMiddle,
-	)
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("error = %v, want %v", err, wantErr)
-	}
-}
-
-func TestServiceAdvanceCultivationReturnsPublishError(t *testing.T) {
-	disciple := newTestDisciple(
-		t,
-		RealmQiRefining,
-		StageMiddle,
-	)
-	wantErr := errors.New("publish failed")
-	repository := &fakeDiscipleRepository{disciple: disciple}
-	publisher := &fakeEventPublisher{err: wantErr}
-	service := NewService(repository, publisher)
+	service := NewService(repository)
 
 	_, err := service.AdvanceCultivation(
 		context.Background(),
