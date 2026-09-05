@@ -4,11 +4,9 @@ import (
 	"context"
 	"log"
 	"os"
-	"strings"
 
 	"cs-dr/internal/disciple"
 	httptransport "cs-dr/internal/http"
-	kafkaadapter "cs-dr/internal/kafka"
 	"cs-dr/internal/postgres"
 
 	"github.com/gin-gonic/gin"
@@ -30,25 +28,6 @@ func main() {
 		log.Fatal("HTTP_PORT is required")
 	}
 
-	kafkaBrokersValue := os.Getenv("KAFKA_BROKERS")
-	if kafkaBrokersValue == "" {
-		log.Fatal("KAFKA_BROKERS is required")
-	}
-
-	cultivationTopic := os.Getenv(
-		"KAFKA_CULTIVATION_ADVANCED_TOPIC",
-	)
-	if cultivationTopic == "" {
-		log.Fatal(
-			"KAFKA_CULTIVATION_ADVANCED_TOPIC is required",
-		)
-	}
-
-	kafkaBrokers := strings.Split(
-		kafkaBrokersValue,
-		",",
-	)
-
 	ctx := context.Background()
 
 	// PostgreSQL
@@ -63,27 +42,6 @@ func main() {
 
 	discipleRepository :=
 		postgres.NewDiscipleRepository(pool)
-
-	// Kafka
-
-	kafkaClient, err := kafkaadapter.NewClient(
-		ctx,
-		kafkaBrokers,
-	)
-	if err != nil {
-		log.Fatalf("connect Kafka: %v", err)
-	}
-	defer kafkaClient.Close()
-
-	log.Printf(
-		"Kafka connected brokers=%v",
-		kafkaBrokers,
-	)
-
-	log.Printf(
-		"Kafka publisher ready topic=%s",
-		cultivationTopic,
-	)
 
 	// Application service
 
