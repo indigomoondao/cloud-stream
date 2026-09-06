@@ -40,7 +40,7 @@ func TestCultivationDLQPublisherPublishesEnvelope(t *testing.T) {
 
 	originalPayload := []byte(`{"eventId":"event-1","discipleId":"disciple-1"}`)
 	sourceRecord := &kgo.Record{
-		Topic:     "disciple.cultivation-advanced.v1",
+		Topic:     "disciple-registry.cultivation-advanced.v1",
 		Value:     originalPayload,
 		Partition: 2,
 		Offset:    15,
