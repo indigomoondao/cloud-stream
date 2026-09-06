@@ -2,8 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"cs-dr/internal/config"
 	"cs-dr/internal/disciple"
@@ -34,7 +39,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer stop()
 
 	// PostgreSQL
 
@@ -72,13 +82,43 @@ func main() {
 
 	address := ":" + cfg.HTTPPort
 
-	logger.Info(
-		"disciple registry listening",
-		"address", "http://localhost:"+cfg.HTTPPort,
-	)
+	server := &http.Server{
+		Addr:    address,
+		Handler: router,
+	}
 
-	if err := router.Run(address); err != nil {
-		logger.Error("start HTTP server", "error", err)
-		os.Exit(1)
+	serverErr := make(chan error, 1)
+
+	go func() {
+		logger.Info(
+			"disciple registry listening",
+			"address", "http://localhost:"+cfg.HTTPPort,
+		)
+
+		serverErr <- server.ListenAndServe()
+	}()
+
+	select {
+	case err := <-serverErr:
+		if !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("start HTTP server", "error", err)
+			os.Exit(1)
+		}
+
+	case <-ctx.Done():
+		logger.Info("shutdown signal received")
+
+		shutdownCtx, cancel := context.WithTimeout(
+			context.Background(),
+			5*time.Second,
+		)
+		defer cancel()
+
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			logger.Error("shutdown HTTP server", "error", err)
+			os.Exit(1)
+		}
+
+		logger.Info("disciple registry stopped")
 	}
 }
