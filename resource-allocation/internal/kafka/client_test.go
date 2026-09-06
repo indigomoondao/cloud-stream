@@ -17,7 +17,7 @@ func TestNewConsumerClientValidatesConfiguration(t *testing.T) {
 	}{
 		{
 			name:    "missing brokers",
-			topic:   "cultivation.advanced.v1",
+			topic:   "disciple-registry.cultivation-advanced.v1",
 			groupID: "resource-allocation-v1",
 			wantErr: ErrBrokersRequired,
 		},
@@ -30,7 +30,7 @@ func TestNewConsumerClientValidatesConfiguration(t *testing.T) {
 		{
 			name:    "missing consumer group",
 			brokers: []string{"localhost:9092"},
-			topic:   "cultivation.advanced.v1",
+			topic:   "disciple-registry.cultivation-advanced.v1",
 			wantErr: ErrConsumerGroupRequired,
 		},
 	}
@@ -60,7 +60,7 @@ func TestNewConsumerClientReturnsPingError(t *testing.T) {
 	_, err := NewConsumerClient(
 		ctx,
 		[]string{"127.0.0.1:1"},
-		"cultivation.advanced.v1",
+		"disciple-registry.cultivation-advanced.v1",
 		"resource-allocation-v1",
 	)
 	if err == nil {
