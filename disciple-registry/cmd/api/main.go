@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 
+	"cs-dr/internal/config"
 	"cs-dr/internal/disciple"
 	httptransport "cs-dr/internal/http"
 	"cs-dr/internal/postgres"
@@ -27,15 +28,9 @@ func main() {
 		)
 	}
 
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		logger.Error("DATABASE_URL is required")
-		os.Exit(1)
-	}
-
-	httpPort := os.Getenv("HTTP_PORT")
-	if httpPort == "" {
-		logger.Error("HTTP_PORT is required")
+	cfg, err := config.LoadAPI()
+	if err != nil {
+		logger.Error("load API config", "error", err)
 		os.Exit(1)
 	}
 
@@ -43,7 +38,7 @@ func main() {
 
 	// PostgreSQL
 
-	pool, err := postgres.NewPool(ctx, databaseURL)
+	pool, err := postgres.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		logger.Error("connect PostgreSQL", "error", err)
 		os.Exit(1)
@@ -75,11 +70,11 @@ func main() {
 		discipleHandler,
 	)
 
-	address := ":" + httpPort
+	address := ":" + cfg.HTTPPort
 
 	logger.Info(
 		"disciple registry listening",
-		"address", "http://localhost:"+httpPort,
+		"address", "http://localhost:"+cfg.HTTPPort,
 	)
 
 	if err := router.Run(address); err != nil {

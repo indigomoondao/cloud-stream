@@ -5,11 +5,9 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
 	"syscall"
-	"time"
 
+	"cs-ra/internal/config"
 	"cs-ra/internal/kafka"
 	"cs-ra/internal/postgres"
 	"cs-ra/internal/resource"
@@ -32,92 +30,11 @@ func main() {
 		)
 	}
 
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		logger.Error("DATABASE_URL is required")
-		os.Exit(1)
-	}
-
-	kafkaBrokersValue := os.Getenv("KAFKA_BROKERS")
-	if kafkaBrokersValue == "" {
-		logger.Error("KAFKA_BROKERS is required")
-		os.Exit(1)
-	}
-
-	kafkaCultivationAdvancedTopic := os.Getenv(
-		"KAFKA_CULTIVATION_ADVANCED_TOPIC",
-	)
-	if kafkaCultivationAdvancedTopic == "" {
-		logger.Error(
-			"KAFKA_CULTIVATION_ADVANCED_TOPIC is required",
-		)
-		os.Exit(1)
-	}
-
-	kafkaCultivationDLQTopic := os.Getenv(
-		"KAFKA_CULTIVATION_ADVANCED_DLQ_TOPIC",
-	)
-	if kafkaCultivationDLQTopic == "" {
-		logger.Error(
-			"KAFKA_CULTIVATION_ADVANCED_DLQ_TOPIC is required",
-		)
-		os.Exit(1)
-	}
-
-	kafkaConsumerGroup := os.Getenv(
-		"KAFKA_CONSUMER_GROUP",
-	)
-	if kafkaConsumerGroup == "" {
-		logger.Error("KAFKA_CONSUMER_GROUP is required")
-		os.Exit(1)
-	}
-
-	kafkaConsumerMaxProcessingAttemptsValue := os.Getenv(
-		"KAFKA_CONSUMER_MAX_PROCESSING_ATTEMPTS",
-	)
-	if kafkaConsumerMaxProcessingAttemptsValue == "" {
-		logger.Error(
-			"KAFKA_CONSUMER_MAX_PROCESSING_ATTEMPTS is required",
-		)
-		os.Exit(1)
-	}
-
-	kafkaConsumerMaxProcessingAttempts, err := strconv.Atoi(
-		kafkaConsumerMaxProcessingAttemptsValue,
-	)
+	cfg, err := config.LoadWorker()
 	if err != nil {
-		logger.Error(
-			"invalid KAFKA_CONSUMER_MAX_PROCESSING_ATTEMPTS",
-			"error", err,
-		)
+		logger.Error("load worker config", "error", err)
 		os.Exit(1)
 	}
-
-	kafkaConsumerRetryBackoffValue := os.Getenv(
-		"KAFKA_CONSUMER_RETRY_BACKOFF",
-	)
-	if kafkaConsumerRetryBackoffValue == "" {
-		logger.Error(
-			"KAFKA_CONSUMER_RETRY_BACKOFF is required",
-		)
-		os.Exit(1)
-	}
-
-	retryBackoff, err := time.ParseDuration(
-		kafkaConsumerRetryBackoffValue,
-	)
-	if err != nil {
-		logger.Error(
-			"invalid KAFKA_CONSUMER_RETRY_BACKOFF",
-			"error", err,
-		)
-		os.Exit(1)
-	}
-
-	kafkaBrokers := strings.Split(
-		kafkaBrokersValue,
-		",",
-	)
 
 	ctx, stop := signal.NotifyContext(
 		context.Background(),
@@ -130,7 +47,7 @@ func main() {
 
 	pool, err := postgres.NewPool(
 		ctx,
-		databaseURL,
+		cfg.DatabaseURL,
 	)
 	if err != nil {
 		logger.Error("connect PostgreSQL", "error", err)
@@ -149,9 +66,9 @@ func main() {
 
 	kafkaClient, err := kafka.NewConsumerClient(
 		ctx,
-		kafkaBrokers,
-		kafkaCultivationAdvancedTopic,
-		kafkaConsumerGroup,
+		cfg.KafkaBrokers,
+		cfg.CultivationAdvancedTopic,
+		cfg.ConsumerGroup,
 	)
 	if err != nil {
 		logger.Error("connect Kafka", "error", err)
@@ -159,25 +76,25 @@ func main() {
 	}
 	defer kafkaClient.Close()
 
-	logger.Info("Kafka connected", "brokers", kafkaBrokers)
+	logger.Info("Kafka connected", "brokers", cfg.KafkaBrokers)
 
 	logger.Info(
 		"Kafka consumer ready",
-		"topic", kafkaCultivationAdvancedTopic,
-		"group", kafkaConsumerGroup,
+		"topic", cfg.CultivationAdvancedTopic,
+		"group", cfg.ConsumerGroup,
 	)
 
 	dlqPublisher := kafka.NewCultivationDLQPublisher(
 		kafkaClient,
-		kafkaCultivationDLQTopic,
+		cfg.CultivationAdvancedDLQTopic,
 	)
 
 	consumer := kafka.NewCultivationConsumer(
 		kafkaClient,
 		resourceService,
 		dlqPublisher,
-		kafkaConsumerMaxProcessingAttempts,
-		retryBackoff,
+		cfg.MaxProcessingAttempts,
+		cfg.RetryBackoff,
 	)
 
 	logger.Info("resource allocation worker started")

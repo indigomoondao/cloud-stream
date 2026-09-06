@@ -6,11 +6,9 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"strconv"
-	"strings"
 	"syscall"
-	"time"
 
+	"cs-dr/internal/config"
 	"cs-dr/internal/kafka"
 	"cs-dr/internal/outbox"
 	"cs-dr/internal/postgres"
@@ -31,61 +29,9 @@ func main() {
 		logger.Debug(".env not found, using system environment variables")
 	}
 
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		logger.Error("DATABASE_URL is required")
-		os.Exit(1)
-	}
-
-	kafkaBrokersValue := os.Getenv("KAFKA_BROKERS")
-	if kafkaBrokersValue == "" {
-		logger.Error("KAFKA_BROKERS is required")
-		os.Exit(1)
-	}
-
-	cultivationTopic := os.Getenv(
-		"KAFKA_CULTIVATION_ADVANCED_TOPIC",
-	)
-	if cultivationTopic == "" {
-		logger.Error(
-			"KAFKA_CULTIVATION_ADVANCED_TOPIC is required",
-		)
-		os.Exit(1)
-	}
-
-	batchSizeValue := os.Getenv("OUTBOX_RELAY_BATCH_SIZE")
-	if batchSizeValue == "" {
-		logger.Error("OUTBOX_RELAY_BATCH_SIZE is required")
-		os.Exit(1)
-	}
-
-	batchSize, err := strconv.Atoi(batchSizeValue)
+	cfg, err := config.LoadWorker()
 	if err != nil {
-		logger.Error(
-			"invalid outbox relay batch size",
-			"value",
-			batchSizeValue,
-			"error",
-			err,
-		)
-		os.Exit(1)
-	}
-
-	pollIntervalValue := os.Getenv("OUTBOX_RELAY_POLL_INTERVAL")
-	if pollIntervalValue == "" {
-		logger.Error("OUTBOX_RELAY_POLL_INTERVAL is required")
-		os.Exit(1)
-	}
-
-	pollInterval, err := time.ParseDuration(pollIntervalValue)
-	if err != nil {
-		logger.Error(
-			"invalid outbox relay poll interval",
-			"value",
-			pollIntervalValue,
-			"error",
-			err,
-		)
+		logger.Error("load worker config", "error", err)
 		os.Exit(1)
 	}
 
@@ -96,7 +42,7 @@ func main() {
 	)
 	defer stop()
 
-	pool, err := postgres.NewPool(ctx, databaseURL)
+	pool, err := postgres.NewPool(ctx, cfg.DatabaseURL)
 	if err != nil {
 		logger.Error("connect PostgreSQL", "error", err)
 		os.Exit(1)
@@ -105,7 +51,7 @@ func main() {
 
 	kafkaClient, err := kafka.NewClient(
 		ctx,
-		strings.Split(kafkaBrokersValue, ","),
+		cfg.KafkaBrokers,
 	)
 	if err != nil {
 		logger.Error("connect Kafka", "error", err)
@@ -116,14 +62,14 @@ func main() {
 	repository := postgres.NewOutboxRepository(pool)
 	publisher := kafka.NewCultivationPublisher(
 		kafkaClient,
-		cultivationTopic,
+		cfg.CultivationTopic,
 	)
 	relay := outbox.NewRelay(
 		repository,
 		publisher,
 		logger,
-		batchSize,
-		pollInterval,
+		cfg.OutboxRelayBatchSize,
+		cfg.OutboxRelayPollInterval,
 	)
 
 	if err := relay.Run(ctx); err != nil &&
